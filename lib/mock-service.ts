@@ -1,29 +1,211 @@
 export type Role = 'admin' | 'engineer'
 export type SimMode = 'normal' | 'warning' | 'critical'
-export type MachineStatus = 'RUNNING' | 'WARNING' | 'CRITICAL' | 'STOPPED'
-export type Telemetry = { timestamp: number; rpm: number; temperature: number; rms: number; kurtosis: number; crestFactor: number }
-export type Machine = { id: string; name: string; line: string; status: MachineStatus; health: number; baseline: { rpm: [number, number]; temperature: [number, number]; rms: [number, number]; kurtosis: [number, number] }; telemetry: Telemetry[] }
-export type Alert = { id: string; machineId: string; level: 'HIGH' | 'MEDIUM' | 'INFO'; title: string; detail: string; time: number; acknowledged: boolean }
-export type TimelineEvent = { id: string; machineId: string; text: string; actor: string; time: number }
-export type Maintenance = { id: string; machineId: string; engineer: string; date: string; time: string; type: string; priority: string; notes: string }
+export type PondStatus = 'NORMAL' | 'WARNING' | 'CRITICAL' | 'OFFLINE'
 
-const initialTelemetry = (mode: SimMode = 'normal'): Telemetry[] => Array.from({ length: 60 }, (_, index) => { const t = index / 5; const n = Math.sin(t) * .4 + Math.sin(t * 2.7) * .16; const warning = mode === 'normal' ? 0 : mode === 'warning' ? index / 60 : index / 32; return { timestamp: Date.now() - (59 - index) * 1000, rpm: 1485 + n * 8 - warning * 12, temperature: 54 + n * 1.5 + warning * (mode === 'critical' ? 17 : 9), rms: 1.7 + n * .18 + warning * (mode === 'critical' ? 3.4 : 1.8), kurtosis: 3.2 + n * .12 + warning * (mode === 'critical' ? 6.5 : 3.2), crestFactor: 2.8 + n * .08 + warning * (mode === 'critical' ? 2.8 : 1.1) } })
-export const createMachine = (id: string, name: string, line: string): Machine => ({ id, name, line, status: 'RUNNING', health: 94, baseline: { rpm: [1470, 1500], temperature: [51, 57], rms: [1.4, 2], kurtosis: [2.9, 3.7] }, telemetry: initialTelemetry() })
-export const seedMachines = (): Machine[] => [createMachine('M-001', 'Motor Assembly A', 'Assembly / Line A'), createMachine('M-002', 'Hydraulic Pump 12', 'Assembly / Line B'), createMachine('M-003', 'CNC Milling Cell 04', 'Machining / Line A'), createMachine('M-004', 'Air Compressor 07', 'Utilities / Plant 1')]
-export const stepTelemetry = (last: Telemetry, mode: SimMode): Telemetry => { const target = mode === 'normal' ? { temperature: 54, rms: 1.7, kurtosis: 3.2, crestFactor: 2.8 } : mode === 'warning' ? { temperature: 63, rms: 3.4, kurtosis: 6.2, crestFactor: 3.9 } : { temperature: 70, rms: 4.7, kurtosis: 8.6, crestFactor: 5.5 }; const alpha = mode === 'normal' ? .08 : .045; const drift = (value: number, goal: number, amount: number) => value + (goal - value) * alpha + (Math.random() - .5) * amount; return { timestamp: Date.now(), rpm: drift(last.rpm, mode === 'normal' ? 1485 : 1440, 2.4), temperature: drift(last.temperature, target.temperature, .22), rms: drift(last.rms, target.rms, .035), kurtosis: drift(last.kurtosis, target.kurtosis, .08), crestFactor: drift(last.crestFactor, target.crestFactor, .035) } }
-export const assess = (t: Telemetry) => t.rms >= 4 || t.kurtosis >= 7 ? { label: 'HIGH RISK', fault: 'Possible Bearing Fault', confidence: 91, level: 'HIGH' as const } : t.rms >= 2.3 || t.kurtosis >= 4 ? { label: 'WARNING', fault: 'Possible Bearing Fault', confidence: 82, level: 'MEDIUM' as const } : { label: 'NORMAL', fault: 'Within baseline', confidence: 94, level: 'INFO' as const }
-export const getNow = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-export const mockApi = { getMachines: seedMachines, getMachine: (id: string) => seedMachines().find((m) => m.id === id), getTelemetry: initialTelemetry, getAlerts: () => [] as Alert[], getMaintenance: () => [] as Maintenance[], getTimeline: () => [] as TimelineEvent[] }
-export type MockState = { machines: Machine[]; mode: SimMode; alerts: Alert[]; maintenance: Maintenance[]; timeline: TimelineEvent[]; notifications: { id: string; text: string; read: boolean; href: string }[] }
-export const seedState = (): MockState => ({ machines: seedMachines(), mode: 'normal', alerts: [], maintenance: [], timeline: [], notifications: [] })
-export const appendEvent = (state: MockState, machineId: string, text: string, actor: string): MockState => ({ ...state, timeline: [{ id: crypto.randomUUID(), machineId, text, actor, time: Date.now() }, ...state.timeline] })
-export const updateMachineMode = (state: MockState, mode: SimMode, machineId = 'M-001'): MockState => ({ ...state, mode, machines: state.machines.map((m) => m.id === machineId ? { ...m, status: mode === 'normal' ? 'RUNNING' : mode === 'warning' ? 'WARNING' : 'CRITICAL', health: mode === 'normal' ? 94 : mode === 'warning' ? 70 : 42 } : m) })
-export const shutdownMachine = (state: MockState, machineId: string, actor: string): MockState => appendEvent({ ...state, machines: state.machines.map((m) => m.id === machineId ? { ...m, status: 'STOPPED' } : m) }, machineId, 'Manual Shutdown initiated', actor)
-export const startMachine = (state: MockState, machineId: string, actor: string): MockState => appendEvent({ ...state, machines: state.machines.map((m) => m.id === machineId ? { ...m, status: 'RUNNING' } : m) }, machineId, 'Machine running', actor)
-export const createAlert = (state: MockState, machineId: string, detail: string, actor: string): MockState => { const id = crypto.randomUUID(); return appendEvent({ ...state, alerts: [{ id, machineId, level: 'HIGH', title: 'Possible bearing fault', detail, time: Date.now(), acknowledged: false }, ...state.alerts], notifications: [{ id, text: `${actor} reported a suspicious condition on ${machineId}`, read: false, href: `/${actor === 'Admin' ? 'admin' : 'engineer'}/machines/${machineId}` }, ...state.notifications] }, machineId, `${actor} alerted factory`, actor) }
-export const scheduleMaintenance = (state: MockState, item: Omit<Maintenance, 'id'>, actor: string): MockState => appendEvent({ ...state, maintenance: [{ ...item, id: crypto.randomUUID() }, ...state.maintenance], notifications: [{ id: crypto.randomUUID(), text: `Maintenance scheduled for ${item.machineId}`, read: false, href: `/${actor === 'Admin' ? 'admin' : 'engineer'}/maintenance` }, ...state.notifications] }, item.machineId, 'Maintenance scheduled', actor)
+export type Telemetry = {
+  timestamp: number
+  temperature: number
+  turbidity: number
+  predictedDo: number
+  aeratorState: 'ON' | 'OFF'
+}
 
-// Future backend adapter boundary: replace these functions with fetch calls without changing UI consumers.
-export const service = mockApi
+export type PondNode = {
+  id: string
+  name: string
+  location: string
+  status: PondStatus
+  healthScore: number
+  baseline: {
+    temperature: [number, number]
+    turbidity: [number, number]
+    predictedDo: [number, number]
+  }
+  telemetry: Telemetry[]
+}
 
-export default mockApi
+export type Alert = {
+  id: string
+  pondId: string
+  level: 'HIGH' | 'MEDIUM' | 'INFO'
+  title: string
+  detail: string
+  time: number
+  acknowledged: boolean
+}
+
+export type TimelineEvent = {
+  id: string
+  pondId: string
+  text: string
+  actor: string
+  time: number
+}
+
+export type Maintenance = {
+  id: string
+  pondId: string
+  engineer: string
+  date: string
+  time: string
+  type: string
+  priority: string
+  notes: string
+}
+
+const initialTelemetry = (mode: SimMode = 'normal'): Telemetry[] =>
+  Array.from({ length: 60 }, (_, index) => {
+    const t = index / 5
+    const n = Math.sin(t) * 0.3 + Math.sin(t * 2.7) * 0.1
+    const warning = mode === 'normal' ? 0 : mode === 'warning' ? index / 60 : index / 30
+
+    const temperature = 28.4 + n * 0.4 + warning * (mode === 'critical' ? 4.5 : 2.2)
+    const turbidity = 42.0 + n * 2.5 + warning * (mode === 'critical' ? 48.0 : 25.0)
+
+    // Physics DO estimation: base solubility - turbidity penalty
+    const baseDo = 11.2 - 0.12 * temperature - 0.0005 * (temperature ** 2)
+    const turbidityPenalty = 0.015 * turbidity + 0.00012 * (turbidity ** 2)
+    const predictedDo = Math.max(1.8, Math.min(9.5, baseDo - turbidityPenalty + n * 0.1))
+
+    const aeratorState = predictedDo < 5.0 || mode === 'critical' ? 'ON' : 'OFF'
+
+    return {
+      timestamp: Date.now() - (59 - index) * 1000,
+      temperature: Number(temperature.toFixed(1)),
+      turbidity: Number(turbidity.toFixed(1)),
+      predictedDo: Number(predictedDo.toFixed(2)),
+      aeratorState,
+    }
+  })
+
+export const createPondNode = (id: string, name: string, location: string): PondNode => ({
+  id,
+  name,
+  location,
+  status: 'NORMAL',
+  healthScore: 96,
+  baseline: {
+    temperature: [26.0, 31.0],
+    turbidity: [20.0, 50.0],
+    predictedDo: [5.5, 8.5],
+  },
+  telemetry: initialTelemetry(),
+})
+
+export const seedPondNodes = (): PondNode[] => [
+  createPondNode('POND-01', 'Vannamei Shrimp Pond A', 'Sector 1 / Main Basin'),
+  createPondNode('POND-02', 'Vannamei Nursery Pond B', 'Sector 1 / Hatchery'),
+  createPondNode('POND-03', 'Grow-Out Pond C', 'Sector 2 / South Field'),
+  createPondNode('POND-04', 'Settling Basin 04', 'Utilities / Water Treatment'),
+]
+
+export const stepTelemetry = (last: Telemetry, mode: SimMode): Telemetry => {
+  const target =
+    mode === 'normal'
+      ? { temp: 28.4, turb: 42.0 }
+      : mode === 'warning'
+      ? { temp: 30.5, turb: 68.0 }
+      : { temp: 33.0, turb: 96.0 }
+
+  const alpha = 0.08
+  const drift = (val: number, goal: number, noise: number) =>
+    val + (goal - val) * alpha + (Math.random() - 0.5) * noise
+
+  const temperature = Math.max(20, Math.min(38, drift(last.temperature, target.temp, 0.15)))
+  const turbidity = Math.max(5, Math.min(150, drift(last.turbidity, target.turb, 0.8)))
+
+  const baseDo = 11.2 - 0.12 * temperature - 0.0005 * (temperature ** 2)
+  const turbidityPenalty = 0.015 * turbidity + 0.00012 * (turbidity ** 2)
+  let predictedDo = Math.max(1.8, Math.min(9.5, baseDo - turbidityPenalty + (Math.random() - 0.5) * 0.1))
+
+  const aeratorState = predictedDo < 5.0 || mode === 'critical' ? 'ON' : last.aeratorState
+
+  // Aeration boost when aerator is ON
+  if (aeratorState === 'ON') {
+    predictedDo = Math.min(8.5, predictedDo + 0.3)
+  }
+
+  return {
+    timestamp: Date.now(),
+    temperature: Number(temperature.toFixed(1)),
+    turbidity: Number(turbidity.toFixed(1)),
+    predictedDo: Number(predictedDo.toFixed(2)),
+    aeratorState,
+  }
+}
+
+export const assessWaterQuality = (t: Telemetry) => {
+  if (t.predictedDo < 5.0) {
+    return {
+      label: 'CRITICAL HYPOXIA RISK',
+      fault: 'Low Dissolved Oxygen (< 5.0 mg/L)',
+      confidence: 96,
+      level: 'CRITICAL' as const,
+    }
+  } else if (t.predictedDo < 6.0 || t.turbidity > 65.0) {
+    return {
+      label: 'ELEVATED RISK',
+      fault: 'Sub-Optimal DO / High Turbidity',
+      confidence: 88,
+      level: 'WARNING' as const,
+    }
+  }
+  return {
+    label: 'OPTIMAL WATER QUALITY',
+    fault: 'Parameters Within Safe Bounds',
+    confidence: 97,
+    level: 'NORMAL' as const,
+  }
+}
+
+export const getNow = () =>
+  new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
+export type MockState = {
+  machines: PondNode[] // kept for compatibility with UI state shape
+  mode: SimMode
+  alerts: Alert[]
+  maintenance: Maintenance[]
+  timeline: TimelineEvent[]
+  notifications: { id: string; text: string; read: boolean; href: string }[]
+}
+
+export const seedState = (): MockState => ({
+  machines: seedPondNodes(),
+  mode: 'normal',
+  alerts: [],
+  maintenance: [],
+  timeline: [],
+  notifications: [],
+})
+
+export const appendEvent = (
+  state: MockState,
+  pondId: string,
+  text: string,
+  actor: string
+): MockState => ({
+  ...state,
+  timeline: [
+    { id: crypto.randomUUID(), pondId, text, actor, time: Date.now() },
+    ...state.timeline,
+  ],
+})
+
+export const updatePondMode = (
+  state: MockState,
+  mode: SimMode,
+  pondId = 'POND-01'
+): MockState => ({
+  ...state,
+  mode,
+  machines: state.machines.map((m) =>
+    m.id === pondId
+      ? {
+          ...m,
+          status: mode === 'normal' ? 'NORMAL' : mode === 'warning' ? 'WARNING' : 'CRITICAL',
+          healthScore: mode === 'normal' ? 96 : mode === 'warning' ? 74 : 45,
+        }
+      : m
+  ),
+})
